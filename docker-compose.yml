@@ -1,0 +1,75 @@
+services:
+
+  # =====================================================
+  # OpenTelemetry Collector
+  # =====================================================
+
+  otel-collector:
+
+    image: otel/opentelemetry-collector:0.160.0
+
+    command:
+      - "--config=/etc/otelcol/config.yaml"
+
+    volumes:
+      - ./infrastructure/otel/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+
+    depends_on:
+      - jaeger
+      - loki
+
+
+  # =====================================================
+  # Jaeger
+  # =====================================================
+
+  jaeger:
+
+    image: jaegertracing/jaeger:latest
+
+    ports:
+      - "16686:16686"
+
+
+  # =====================================================
+  # Loki
+  # =====================================================
+
+  loki:
+
+    image: grafana/loki:latest
+
+    command:
+      - "-config.file=/etc/loki/loki-config.yaml"
+
+    volumes:
+      - ./infrastructure/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+
+    ports:
+      - "3100:3100"
+
+
+  # =====================================================
+  # Prometheus
+  # =====================================================
+
+  prometheus:
+
+    image: prom/prometheus:latest
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+    ports:
+      - "9090:9090"
+
+    depends_on:
+      - otel-collector
