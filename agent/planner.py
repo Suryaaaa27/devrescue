@@ -238,7 +238,110 @@ class HypothesisPlanner:
             )
 
         return gaps
+    
+    def _build_code_search_query(
+        self,
+        hypothesis: Hypothesis,
+        state: InvestigationState,
+    ) -> str:
+        """
+        Build a focused GitHub code-search query from the
+        evidence already collected during the investigation.
 
+        Priority:
+        1. Exception message
+        2. Failed operation
+        3. Trace/span operation
+        4. Relevant error-log message
+        5. Hypothesis name
+        6. Service name
+        """
+
+        candidates: list[str] = []
+
+        evidence = state.evidence
+
+        # ---------------------------------------------------------
+        # Exception / trace evidence
+        # ---------------------------------------------------------
+        if evidence:
+            for trace in evidence.traces:
+                for span in trace.spans:
+
+                    operation = span.operation
+
+                    if operation:
+                        candidates.append(str(operation))
+
+                    for trace_log in span.logs:
+                        fields = trace_log.fields
+
+                        exception_type = fields.get(
+                            "exception.type"
+                        )
+
+                        exception_message = fields.get(
+                            "exception.message"
+                        )
+
+                        if exception_type:
+                            candidates.append(
+                                str(exception_type)
+                            )
+
+                        if exception_message:
+                            candidates.append(
+                                str(exception_message)
+                            )
+
+        # ---------------------------------------------------------
+        # Application logs
+        # ---------------------------------------------------------
+        if evidence:
+            for log in evidence.logs:
+                if log.message:
+                    candidates.append(
+                        str(log.message)
+                    )
+
+        # ---------------------------------------------------------
+        # Hypothesis
+        # ---------------------------------------------------------
+        if hypothesis is not None and hypothesis.name:
+            candidates.append(
+                str(hypothesis.name)
+            )
+
+        # ---------------------------------------------------------
+        # Service fallback
+        # ---------------------------------------------------------
+        if not candidates:
+            candidates.append(
+                state.service
+            )
+
+        # ---------------------------------------------------------
+        # Clean and deduplicate
+        # ---------------------------------------------------------
+        cleaned: list[str] = []
+
+        for candidate in candidates:
+
+            value = " ".join(
+                str(candidate).split()
+            ).strip()
+
+            if not value:
+                continue
+
+            if value not in cleaned:
+                cleaned.append(value)
+
+        # Keep the GitHub query bounded.
+        query = " ".join(cleaned[:3])
+
+        return query or state.service
+    
     def identify_gaps(
         self,
         hypothesis: Hypothesis,
@@ -391,7 +494,116 @@ class HypothesisPlanner:
                         arguments={"service": state.service},
                     )
                 )
+        
+        # ---------------------------------------------------------
+        # GitHub / code investigation
+        # ---------------------------------------------------------
+        code_keywords = (
+            "code",
+            "source code",
+            "implementation",
+            "bug",
+            "exception",
+            "application error",
+            "application failure",
+            "regression",
+            "recent change",
+            "recent commit",
+            "commit",
+            "deployment",
+            "release",
+        )
 
+        code_investigation_needed = (
+            any(
+                keyword in hypothesis.name.lower()
+                or keyword in hypothesis.explanation.lower()
+                for keyword in code_keywords
+            )
+            or hypothesis.category == "application_error"
+        )
+
+        if code_investigation_needed:
+
+            if (
+                "search_code" in state.available_tools
+                and "search_code" not in called
+            ):
+                gaps.append(
+                    EvidenceGap(
+                        name="relevant_source_code",
+                        description=(
+                            "The current hypothesis indicates a possible "
+                            "application-level problem. Inspect relevant "
+                            "source code to identify the implementation "
+                            "responsible for the observed failure."
+                        ),
+                        priority=85,
+                        tool="search_code",
+                        arguments={
+                            "query": self._build_code_search_query(
+                                hypothesis,
+                                state,
+                            ),
+                        },
+                    )
+                )
+
+            elif (
+                "list_commits" in state.available_tools
+                and "list_commits" not in called
+            ):
+                gaps.append(
+                    EvidenceGap(
+                        name="recent_code_changes",
+                        description=(
+                            "Application-level evidence remains "
+                            "insufficient. Inspect recent repository "
+                            "commits for a possible regression or "
+                            "behavior-changing code change."
+                        ),
+                        priority=75,
+                        tool="list_commits",
+                        arguments={},
+                    )
+                )
+
+            elif (
+                "get_file" in state.available_tools
+                and "get_file" not in called
+            ):
+                gaps.append(
+                    EvidenceGap(
+                        name="source_file",
+                        description=(
+                            "Inspect the relevant source file to "
+                            "understand the implementation behind "
+                            "the suspected failure."
+                        ),
+                        priority=65,
+                        tool="get_file",
+                        arguments={},
+                    )
+                )
+
+            elif (
+                "get_diff" in state.available_tools
+                and "get_diff" not in called
+            ):
+                gaps.append(
+                    EvidenceGap(
+                        name="suspected_commit_diff",
+                        description=(
+                            "Inspect the relevant commit diff to "
+                            "determine whether a recent code change "
+                            "introduced the failure."
+                        ),
+                        priority=60,
+                        tool="get_diff",
+                        arguments={},
+                    )
+                )
+        
         # ---------------------------------------------------------
         # Generic fallback investigation
         # ---------------------------------------------------------

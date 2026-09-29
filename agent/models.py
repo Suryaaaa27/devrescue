@@ -28,7 +28,9 @@ class InvestigationResult:
     explanation: str | None = None
 
     iterations: int = 0
-
+    
+    decision: dict[str, Any] | None = None
+    
     tools_called: list[str] = field(
         default_factory=list
     )

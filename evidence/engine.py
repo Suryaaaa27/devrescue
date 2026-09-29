@@ -2,7 +2,10 @@ import json
 from typing import Any
 from datetime import datetime, timezone
 from evidence.models import (
+    CodeEvidence,
+    CommitEvidence,
     Correlation,
+    DiffEvidence,
     InvestigationEvidence,
     LogEvidence,
     MetricEvidence,
@@ -11,6 +14,7 @@ from evidence.models import (
     TraceEvidence,
     TraceLogEvidence,
 )
+from evidence.code_relevance import CodeRelevanceEngine
 
 
 class EvidenceEngine:
@@ -25,6 +29,9 @@ class EvidenceEngine:
         log_result: dict[str, Any] | None = None,
         metric_results: list[dict[str, Any]] | None = None,
         trace_result: dict[str, Any] | None = None,
+        code_results: list[dict[str, Any]] | None = None,
+        commit_results: list[dict[str, Any]] | None = None,
+        diff_results: list[dict[str, Any]] | None = None,
     ) -> InvestigationEvidence:
 
         evidence = InvestigationEvidence(
@@ -45,7 +52,22 @@ class EvidenceEngine:
             evidence,
             trace_result or {},
         )
+        
+        self._add_code(
+            evidence,
+            code_results or [],
+        )
 
+        self._add_commits(
+            evidence,
+            commit_results or [],
+        )
+
+        self._add_diffs(
+            evidence,
+            diff_results or [],
+        )
+        
         self._deduplicate(
             evidence
         )
@@ -61,6 +83,11 @@ class EvidenceEngine:
         self._correlate_temporally(
             evidence
         )
+        
+        self._build_code_relevance(
+            evidence
+        )
+
 
         self._build_summary(
             evidence
@@ -226,7 +253,159 @@ class EvidenceEngine:
             evidence.traces.append(
                 trace
             )
+    def _add_code(
+        self,
+        evidence: InvestigationEvidence,
+        results: list[dict[str, Any]],
+    ) -> None:
 
+        for result in results:
+            if result.get("status") != "success":
+               continue
+
+            file_data = result.get("file", {})
+
+            path = file_data.get("path")
+
+            if not path:
+               continue
+
+            code = CodeEvidence(
+                repository=result.get(
+                    "repository",
+                    file_data.get("repository", ""),
+                ),
+                path=path,
+                content=file_data.get("content", ""),
+                start_line=file_data.get("start_line"),
+                end_line=file_data.get("end_line"),
+                symbol=file_data.get("symbol"),
+            )
+
+            evidence.code.append(code)
+            
+    def _add_commits(
+        self,
+        evidence: InvestigationEvidence,
+        results: list[dict[str, Any]],
+    ) -> None:
+
+        for result in results:
+
+            if result.get("status") != "success":
+                continue
+
+            repository = result.get(
+                "repository",
+                "",
+            )
+
+            commit_items = result.get(
+                "results",
+                [],
+            )
+
+            if not commit_items and result.get("commit"):
+                commit_items = [
+                    result["commit"]
+                ]
+
+            for item in commit_items:
+
+                sha = item.get("sha")
+
+                if not sha:
+                    continue
+
+                author_data = item.get(
+                    "author"
+                )
+
+                if isinstance(
+                    author_data,
+                    dict,
+                ):
+                    author = author_data.get(
+                        "name"
+                    )
+
+                    timestamp = (
+                        item.get("timestamp")
+                        or author_data.get("date")
+                    )
+                else:
+                    author = author_data
+
+                    timestamp = item.get(
+                        "timestamp"
+                    )
+
+                commit = CommitEvidence(
+                    repository=repository,
+                    commit_sha=sha,
+                    message=item.get(
+                        "message"
+                    ) or "",
+                    author=author,
+                    timestamp=timestamp,
+                )
+
+                evidence.commits.append(
+                    commit
+                )
+            
+    def _add_diffs(
+        self,
+        evidence: InvestigationEvidence,
+        results: list[dict[str, Any]],
+    ) -> None:
+
+        for result in results:
+
+            if result.get("status") != "success":
+                continue
+
+            repository = result.get(
+                "repository",
+                "",
+            )
+
+            commit_data = result.get(
+                "commit",
+                {},
+            )
+
+            commit_sha = (
+                result.get("commit_sha")
+                or commit_data.get("sha")
+                or ""
+            )
+
+            for item in result.get(
+                "files",
+                [],
+            ):
+
+                path = (
+                    item.get("path")
+                    or item.get("filename")
+                )
+
+                if not path:
+                    continue
+
+                diff = DiffEvidence(
+                    repository=repository,
+                    commit_sha=commit_sha,
+                    path=path,
+                    patch=item.get(
+                        "patch"
+                    ) or "",
+                )
+
+                evidence.diffs.append(
+                    diff
+                )
     # ---------------------------------------------------------
     # Deduplication
     # ---------------------------------------------------------
@@ -271,6 +450,52 @@ class EvidenceEngine:
                 unique_spans[span.span_id] = span
 
             trace.spans = list(unique_spans.values())
+
+        # Deduplicate code evidence.
+        unique_code = {}
+
+        for code in evidence.code:
+            code_key = (
+                code.repository,
+                code.path,
+                code.start_line,
+                code.end_line,
+                code.symbol,
+                code.content,
+            )
+
+            unique_code[code_key] = code
+
+        evidence.code = list(
+            unique_code.values()
+        )
+
+        # Deduplicate commits by SHA.
+        unique_commits = {}
+
+        for commit in evidence.commits:
+            unique_commits[
+                commit.commit_sha
+            ] = commit
+
+        evidence.commits = list(
+            unique_commits.values()
+        )
+
+        # Deduplicate diffs by commit + path.
+        unique_diffs = {}
+
+        for diff in evidence.diffs:
+            diff_key = (
+                diff.commit_sha,
+                diff.path,
+            )
+
+            unique_diffs[diff_key] = diff
+
+        evidence.diffs = list(
+            unique_diffs.values()
+        )
     # ---------------------------------------------------------
     # Correlation
     # ---------------------------------------------------------
@@ -281,6 +506,10 @@ class EvidenceEngine:
     ) -> None:
 
         correlations = []
+
+        # ---------------------------------------------------------
+        # Observability correlations
+        # ---------------------------------------------------------
 
         for log in evidence.logs:
 
@@ -337,7 +566,6 @@ class EvidenceEngine:
                 for key, value in identifiers.items():
 
                     if key == "request_id":
-
                         correlations.append(
                             Correlation(
                                 source="trace",
@@ -352,7 +580,6 @@ class EvidenceEngine:
                         )
 
                     elif key == "trace_id":
-
                         correlations.append(
                             Correlation(
                                 source="span",
@@ -366,13 +593,112 @@ class EvidenceEngine:
                             )
                         )
 
+        # ---------------------------------------------------------
+        # GitHub correlations
+        # ---------------------------------------------------------
+
+        # Code ↔ Diff
+        #
+        # A diff is directly relevant to a source file when
+        # both belong to the same repository and path.
+        for code in evidence.code:
+
+            for diff in evidence.diffs:
+
+                if (
+                    code.repository
+                    and diff.repository
+                    and code.repository == diff.repository
+                    and code.path == diff.path
+                ):
+                    correlations.append(
+                        Correlation(
+                            source="code",
+                            target="diff",
+                            key="repository_path",
+                            value=(
+                                f"{code.repository}:{code.path}"
+                            ),
+                            description=(
+                                f"Source file {code.path} is "
+                                "modified by commit "
+                                f"{diff.commit_sha}."
+                            ),
+                        )
+                    )
+
+        # Commit ↔ Diff
+        #
+        # A diff belongs to the commit identified by its SHA.
+        for commit in evidence.commits:
+
+            for diff in evidence.diffs:
+
+                if (
+                    commit.repository
+                    and diff.repository
+                    and commit.repository == diff.repository
+                    and commit.commit_sha == diff.commit_sha
+                ):
+                    correlations.append(
+                        Correlation(
+                            source="commit",
+                            target="diff",
+                            key="commit_sha",
+                            value=commit.commit_sha,
+                            description=(
+                                "Diff belongs to commit "
+                                f"{commit.commit_sha}."
+                            ),
+                        )
+                    )
+
+        # Code ↔ Commit
+        #
+        # Connect source code directly to commits when one of the
+        # commit's diffs modifies that exact source file.
+        for code in evidence.code:
+
+            for commit in evidence.commits:
+
+                for diff in evidence.diffs:
+
+                    if (
+                        code.repository
+                        and commit.repository
+                        and diff.repository
+                        and code.repository
+                        == commit.repository
+                        == diff.repository
+                        and code.path == diff.path
+                        and commit.commit_sha
+                        == diff.commit_sha
+                    ):
+                        correlations.append(
+                            Correlation(
+                                source="code",
+                                target="commit",
+                                key="repository_path",
+                                value=(
+                                    f"{code.repository}:{code.path}"
+                                ),
+                                description=(
+                                    f"Source file {code.path} "
+                                    "was modified by commit "
+                                    f"{commit.commit_sha}."
+                                ),
+                            )
+                        )
+
+        # ---------------------------------------------------------
         # Remove duplicate correlations
+        # ---------------------------------------------------------
+
         evidence.correlations = list(
             dict.fromkeys(
                 correlations
             )
         )
-
     # ---------------------------------------------------------
     # Signal classification
     # ---------------------------------------------------------
@@ -656,7 +982,31 @@ class EvidenceEngine:
 
         except ValueError:
             return None
+    
+    def _build_code_relevance(
+        self,
+        evidence: InvestigationEvidence,
+    ) -> None:
+        """
+        Analyze the relationship between runtime evidence
+        and discovered source code.
 
+        This remains deterministic and does not make causal
+        claims about the incident.
+        """
+
+        if not evidence.code:
+            return
+
+        engine = CodeRelevanceEngine()
+
+        evidence.code_relevance = engine.analyze(
+            code=evidence.code,
+            diffs=evidence.diffs,
+            traces=evidence.traces,
+            logs=evidence.logs,
+        )
+    
     # ---------------------------------------------------------
     # Summary
     # ---------------------------------------------------------
@@ -700,8 +1050,14 @@ class EvidenceEngine:
             "failed_span_count": len(
                 failed_spans
             ),
+            "code_count": len(evidence.code),
+            "commit_count": len(evidence.commits),
+            "diff_count": len(evidence.diffs),
             "request_count": len(
                 evidence.request_ids
+            ),
+            "code_relevance_count": len(
+               evidence.code_relevance
             ),
             "trace_id_count": len(
                 evidence.trace_ids

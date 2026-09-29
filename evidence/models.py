@@ -61,6 +61,43 @@ class TemporalCorrelation:
     delta_seconds: float
     description: str
 
+@dataclass
+class CodeEvidence:
+    repository: str
+    path: str
+    content: str
+    start_line: int | None = None
+    end_line: int | None = None
+    symbol: str | None = None
+
+
+@dataclass
+class CommitEvidence:
+    repository: str
+    commit_sha: str
+    message: str
+    author: str | None = None
+    timestamp: str | None = None
+
+
+@dataclass
+class DiffEvidence:
+    repository: str
+    commit_sha: str
+    path: str
+    patch: str
+
+@dataclass(frozen=True)
+class CodeRelevance:
+    """
+    Describes how strongly a source-code artifact is related
+    to the observed failure.
+    """
+
+    path: str
+    score: float
+    matched_terms: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
 
 @dataclass
 class InvestigationEvidence:
@@ -68,8 +105,16 @@ class InvestigationEvidence:
     logs: list[LogEvidence] = field(default_factory=list)
     metrics: list[MetricEvidence] = field(default_factory=list)
     traces: list[TraceEvidence] = field(default_factory=list)
+    code: list[CodeEvidence] = field(default_factory=list)
+    commits: list[CommitEvidence] = field(default_factory=list)
+    diffs: list[DiffEvidence] = field(default_factory=list)
     correlations: list[Correlation] = field(default_factory=list)
     temporal_correlations: list[TemporalCorrelation] = field(default_factory=list)
+
+    code_relevance: list[CodeRelevance] = field(
+        default_factory=list
+    )
+
     request_ids: set[str] = field(default_factory=set)
     trace_ids: set[str] = field(default_factory=set)
     span_ids: set[str] = field(default_factory=set)

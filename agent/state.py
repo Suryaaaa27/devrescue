@@ -17,6 +17,8 @@ class InvestigationState:
     max_iterations: int = 8
 
     completed: bool = False
+    
+    decision: dict[str, Any] | None = None
 
     available_tools: set[str] = field(
         default_factory=set
@@ -41,7 +43,17 @@ class InvestigationState:
     trace_result: dict[str, Any] = field(
         default_factory=dict
     )
+    code_results: list[dict[str, Any]] = field(
+        default_factory=list
+    )
 
+    commit_results: list[dict[str, Any]] = field(
+        default_factory=list
+    )
+
+    diff_results: list[dict[str, Any]] = field(
+        default_factory=list
+    )
     evidence: InvestigationEvidence | None = None
 
     hypotheses: list[Hypothesis] = field(

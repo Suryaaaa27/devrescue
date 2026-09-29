@@ -257,3 +257,452 @@ def test_database_dependency_hypothesis():
         "database_unavailable"
         in selected.matched_signals
     )
+    
+def test_github_evidence_increases_application_error_confidence():
+
+    evidence_engine = EvidenceEngine()
+
+    evidence = evidence_engine.build(
+        service="payment-service",
+
+        log_result={
+            "results": [
+                {
+                    "timestamp": "2026-09-17T10:00:00Z",
+                    "service": "payment-service",
+                    "level": "ERROR",
+                    "message": "payment processing failed",
+                }
+            ]
+        },
+
+        metric_results=[
+            {
+                "metric": {
+                    "__name__": "payment_failures_total",
+                },
+                "value": [
+                    1788947489.053,
+                    "1",
+                ],
+                "query": "payment_failures_total",
+            }
+        ],
+
+        trace_result={
+            "results": [
+                {
+                    "trace_id": "trace-github-001",
+                    "spans": [
+                        {
+                            "span_id": "span-github-001",
+                            "operation": "process_payment",
+                            "start_time": 1788947370253688,
+                            "duration": 2152901,
+                            "tags": {
+                                "otel.status_code": "ERROR",
+                                "error": True,
+                            },
+                            "logs": [
+                                {
+                                    "timestamp": 1788947372406590,
+                                    "fields": {
+                                        "event": "exception",
+                                        "exception.type": (
+                                            "ValueError"
+                                        ),
+                                        "exception.message": (
+                                            "payment processing failed"
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+
+        code_results=[
+            {
+                "status": "success",
+                "repository": "Suryaaaa27/devrescue",
+                "file": {
+                    "path": (
+                        "services/payment_service/main.py"
+                    ),
+                    "content": (
+                        "raise ValueError("
+                        "\"payment processing failed\")"
+                    ),
+                },
+            }
+        ],
+
+        commit_results=[
+            {
+                "status": "success",
+                "repository": "Suryaaaa27/devrescue",
+                "results": [
+                    {
+                        "sha": "github-commit-001",
+                        "message": "fix payment processing",
+                        "author": "Surya",
+                        "timestamp": (
+                            "2026-09-17T09:00:00Z"
+                        ),
+                    }
+                ],
+            }
+        ],
+
+        diff_results=[
+            {
+                "status": "success",
+                "repository": "Suryaaaa27/devrescue",
+                "commit": {
+                    "sha": "github-commit-001",
+                    "message": "fix payment processing",
+                },
+                "files": [
+                    {
+                        "filename": (
+                            "services/payment_service/main.py"
+                        ),
+                        "patch": (
+                            "@@ -10,1 +10,1 @@\n"
+                            "+raise ValueError("
+                            "\"payment processing failed\")"
+                        ),
+                    }
+                ],
+            }
+        ],
+    )
+
+    engine = HypothesisEngine()
+
+    hypotheses = engine.analyze(evidence)
+
+    application_errors = [
+        hypothesis
+        for hypothesis in hypotheses
+        if hypothesis.name == "Application exception"
+    ]
+
+    assert application_errors
+
+    selected = application_errors[0]
+
+    assert selected.confidence > 0.0
+
+    assert selected.supporting_evidence
+
+    assert any(
+        evidence.evidence_type in {
+            "code",
+            "commit",
+            "diff",
+        }
+        for evidence in selected.supporting_evidence
+    )
+    
+def test_github_correlated_evidence_influences_confidence():
+
+    evidence_engine = EvidenceEngine()
+
+    base_evidence = evidence_engine.build(
+        service="payment-service",
+        log_result={
+            "results": [
+                {
+                    "timestamp": "2026-09-17T10:00:00Z",
+                    "service": "payment-service",
+                    "level": "ERROR",
+                    "message": "payment processing failed",
+                }
+            ]
+        },
+        metric_results=[
+            {
+                "metric": {
+                    "__name__": "payment_failures_total",
+                },
+                "value": [
+                    1788947489.053,
+                    "1",
+                ],
+                "query": "payment_failures_total",
+            }
+        ],
+        trace_result={
+            "results": [
+                {
+                    "trace_id": "trace-confidence-001",
+                    "spans": [
+                        {
+                            "span_id": "span-confidence-001",
+                            "operation": "process_payment",
+                            "start_time": 1788947370253688,
+                            "duration": 2152901,
+                            "tags": {
+                                "otel.status_code": "ERROR",
+                                "error": True,
+                            },
+                            "logs": [
+                                {
+                                    "timestamp": 1788947372406590,
+                                    "fields": {
+                                        "event": "exception",
+                                        "exception.type": "ValueError",
+                                        "exception.message": (
+                                            "payment processing failed"
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    github_evidence = evidence_engine.build(
+        service="payment-service",
+        log_result={
+            "results": [
+                {
+                    "timestamp": "2026-09-17T10:00:00Z",
+                    "service": "payment-service",
+                    "level": "ERROR",
+                    "message": "payment processing failed",
+                }
+            ]
+        },
+        metric_results=[
+            {
+                "metric": {
+                    "__name__": "payment_failures_total",
+                },
+                "value": [
+                    1788947489.053,
+                    "1",
+                ],
+                "query": "payment_failures_total",
+            }
+        ],
+        trace_result={
+            "results": [
+                {
+                    "trace_id": "trace-confidence-001",
+                    "spans": [
+                        {
+                            "span_id": "span-confidence-001",
+                            "operation": "process_payment",
+                            "start_time": 1788947370253688,
+                            "duration": 2152901,
+                            "tags": {
+                                "otel.status_code": "ERROR",
+                                "error": True,
+                            },
+                            "logs": [
+                                {
+                                    "timestamp": 1788947372406590,
+                                    "fields": {
+                                        "event": "exception",
+                                        "exception.type": "ValueError",
+                                        "exception.message": (
+                                            "payment processing failed"
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        code_results=[
+            {
+                "status": "success",
+                "repository": "Suryaaaa27/devrescue",
+                "file": {
+                    "path": (
+                        "services/payment_service/main.py"
+                    ),
+                    "content": (
+                        "raise ValueError("
+                        '"payment processing failed")'
+                    ),
+                },
+            }
+        ],
+        commit_results=[
+            {
+                "status": "success",
+                "repository": "Suryaaaa27/devrescue",
+                "results": [
+                    {
+                        "sha": "github-confidence-001",
+                        "message": "fix payment processing",
+                        "author": "Surya",
+                        "timestamp": "2026-09-17T09:00:00Z",
+                    }
+                ],
+            }
+        ],
+        diff_results=[
+            {
+                "status": "success",
+                "repository": "Suryaaaa27/devrescue",
+                "commit": {
+                    "sha": "github-confidence-001",
+                    "message": "fix payment processing",
+                },
+                "files": [
+                    {
+                        "filename": (
+                            "services/payment_service/main.py"
+                        ),
+                        "patch": (
+                            "@@ -10,1 +10,1 @@\n"
+                            '+raise ValueError("payment processing failed")'
+                        ),
+                    }
+                ],
+            }
+        ],
+    )
+
+    engine = HypothesisEngine()
+
+    base_hypotheses = engine.analyze(base_evidence)
+    github_hypotheses = engine.analyze(github_evidence)
+
+    base_application = next(
+        hypothesis
+        for hypothesis in base_hypotheses
+        if hypothesis.name == "Application exception"
+    )
+
+    github_application = next(
+        hypothesis
+        for hypothesis in github_hypotheses
+        if hypothesis.name == "Application exception"
+    )
+
+    assert github_application.confidence >= (
+        base_application.confidence
+    )
+
+    assert any(
+        item.evidence_type in {
+            "code",
+            "commit",
+            "diff",
+        }
+        for item in github_application.supporting_evidence
+    )
+    
+def test_code_relevance_strengthens_application_hypothesis():
+
+    evidence_engine = EvidenceEngine()
+
+    evidence = evidence_engine.build(
+        service="payment-service",
+        log_result={
+            "results": [
+                {
+                    "timestamp": "2026-09-17T10:00:00Z",
+                    "service": "payment-service",
+                    "level": "ERROR",
+                    "message": "payment processing failed",
+                }
+            ]
+        },
+        metric_results=[],
+        trace_result={
+            "results": [
+                {
+                    "trace_id": "trace-hypothesis-code-001",
+                    "spans": [
+                        {
+                            "span_id": "span-hypothesis-code-001",
+                            "operation": "process_payment",
+                            "start_time": None,
+                            "duration": None,
+                            "tags": {
+                                "otel.status_code": "ERROR",
+                                "error": True,
+                            },
+                            "logs": [
+                                {
+                                    "timestamp": None,
+                                    "fields": {
+                                        "exception.type": "ValueError",
+                                        "exception.message": (
+                                            "payment processing failed"
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        code_results=[
+            {
+                "status": "success",
+                "repository": "Suryaaaa27/devrescue",
+                "file": {
+                    "path": (
+                        "services/payment_service/main.py"
+                    ),
+                    "content": (
+                        "def process_payment(amount):\n"
+                        "    raise ValueError("
+                        '"payment processing failed")'
+                    ),
+                },
+            }
+        ],
+        diff_results=[
+            {
+                "status": "success",
+                "repository": "Suryaaaa27/devrescue",
+                "commit_sha": "abc-code-001",
+                "files": [
+                    {
+                        "path": (
+                            "services/payment_service/main.py"
+                        ),
+                        "patch": (
+                            '+ raise ValueError('
+                            '"payment processing failed")'
+                        ),
+                    }
+                ],
+            }
+        ],
+    )
+
+    engine = HypothesisEngine()
+
+    hypotheses = engine.analyze(evidence)
+
+    application = next(
+        hypothesis
+        for hypothesis in hypotheses
+        if hypothesis.name == "Application exception"
+    )
+
+    assert evidence.code_relevance
+
+    assert application.confidence > 0
+
+    assert any(
+        item.evidence_type == "code_relevance"
+        for item in application.supporting_evidence
+    )

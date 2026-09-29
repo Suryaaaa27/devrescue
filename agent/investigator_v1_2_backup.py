@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from agent.decision import InvestigationDecisionEngine
 from agent.models import InvestigationAction, InvestigationResult
 from agent.state import InvestigationState
 from evidence.engine import EvidenceEngine
@@ -63,10 +64,27 @@ class InvestigationAgent:
 
             self._evaluate_hypotheses(state)
 
+            decision = self.decision_engine.decide(state)
+            
+            state.decision = decision.to_dict()
+
+            state.investigation_notes.append(
+                (
+                    f"Decision: {decision.decision}. "
+                    f"{decision.reason}"
+                )
+            )
+
+            if decision.decision in {
+                InvestigationDecisionEngine.CONCLUDE,
+                InvestigationDecisionEngine.INSUFFICIENT_EVIDENCE,
+            }:
+                state.completed = True
+                break
+            
             if self._has_sufficient_evidence(state):
                 state.completed = True
                 break
-
         return self._build_result(state)
 
     # ------------------------------------------------------------------

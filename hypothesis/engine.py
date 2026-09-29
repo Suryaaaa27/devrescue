@@ -193,7 +193,14 @@ class HypothesisEngine:
                 evidence,
             )
         )
-
+        confidence = min(
+            0.95,
+            confidence
+            + self._code_relevance_confidence_boost(
+                rule,
+                evidence,
+            ),
+        )
         supporting_evidence = (
             self._collect_supporting_evidence(
                 matched_signals,
@@ -396,13 +403,41 @@ class HypothesisEngine:
             1.0,
             penalty,
         )
+    
+    def _has_github_evidence(
+        self,
+        evidence: InvestigationEvidence,
+    ) -> bool:
+        """
+        Determine whether the investigation contains a
+        meaningful GitHub evidence chain.
 
+        GitHub evidence is considered meaningful when
+        repository code/commits/diffs are connected through
+        an explicit correlation.
+        """
+
+        github_correlations = {
+            ("code", "diff"),
+            ("commit", "diff"),
+            ("code", "commit"),
+        }
+
+        return any(
+            (
+                correlation.source,
+                correlation.target,
+            )
+            in github_correlations
+            for correlation in evidence.correlations
+        )
+    
     # ==========================================================
     # CONFIDENCE
     # ==========================================================
 
-    @staticmethod
     def _confidence_from_score(
+        self,
         score: float,
         evidence: InvestigationEvidence,
     ) -> float:
@@ -435,6 +470,12 @@ class HypothesisEngine:
 
         if evidence.traces:
             evidence_sources += 1
+            
+        if evidence.summary.get("domain_evidence_count", 0) > 0:
+            evidence_sources += 1
+            
+        if self._has_github_evidence(evidence):
+            evidence_sources += 1
 
         # Domain-specific tools (database, deployment, downstream, etc.)
         # are independent evidence sources.
@@ -446,7 +487,8 @@ class HypothesisEngine:
 
         elif evidence_sources == 2:
             confidence += 0.02
-
+        
+        confidence = min(confidence, 0.95)
         return min(
             0.95,
             confidence,
@@ -616,7 +658,49 @@ class HypothesisEngine:
                 severity="high",
             ),
         ]
+    def _code_relevance_confidence_boost(
+        self,
+        rule: HypothesisRule,
+        evidence: InvestigationEvidence,
+    ) -> float:
+        """
+        Add bounded confidence support when relevant source code
+        corroborates an application-level hypothesis.
 
+        Code relevance does not independently establish causality.
+        It only strengthens confidence when the hypothesis concerns
+        an application-level exception.
+        """
+
+        if rule.category != "application_error":
+            return 0.0
+
+        if not evidence.code_relevance:
+            return 0.0
+
+        relevant = [
+            item
+            for item in evidence.code_relevance
+            if item.score > 0
+        ]
+
+        if not relevant:
+            return 0.0
+
+        strongest = max(
+            item.score
+            for item in relevant
+        )
+
+        # Bounded contribution.
+        #
+        # 0.50 relevance → +0.025 confidence
+        # 0.75 relevance → +0.0375 confidence
+        # 1.00 relevance → +0.05 confidence
+        return min(
+            0.05,
+            strongest * 0.05,
+        )
     # ==========================================================
     # EVIDENCE REFERENCES
     # ==========================================================
@@ -767,6 +851,98 @@ class HypothesisEngine:
                 )
             )
 
+        # GitHub evidence
+        #
+        # GitHub evidence is treated as supporting evidence only
+        # when the EvidenceEngine has established an explicit
+        # relationship between source code, commits, and diffs.
+        github_correlations = {
+            ("code", "diff"),
+            ("commit", "diff"),
+            ("code", "commit"),
+        }
+
+        for correlation in evidence.correlations:
+
+            if (
+                correlation.source,
+                correlation.target,
+            ) not in github_correlations:
+                continue
+
+            if correlation.source == "code":
+                references.append(
+                    EvidenceReference(
+                        evidence_type="code",
+                        identifier=correlation.value,
+                        description=(
+                            "Source code is associated with a "
+                            "GitHub change relevant to the "
+                            "investigated failure."
+                        ),
+                        strength="supporting",
+                    )
+                )
+
+            elif correlation.source == "commit":
+                references.append(
+                    EvidenceReference(
+                        evidence_type="commit",
+                        identifier=correlation.value,
+                        description=(
+                            "A GitHub commit is associated with "
+                            "the source change identified during "
+                            "the investigation."
+                        ),
+                        strength="supporting",
+                    )
+                )
+
+            if correlation.target == "diff":
+                references.append(
+                    EvidenceReference(
+                        evidence_type="diff",
+                        identifier=correlation.value,
+                        description=(
+                            "A GitHub diff is associated with the "
+                            "source change identified during the "
+                            "investigation."
+                        ),
+                        strength="supporting",
+                    )
+                )
+                
+            if evidence.code_relevance:
+
+                for relevance in evidence.code_relevance:
+
+                    if relevance.score <= 0:
+                       continue
+
+                    references.append(
+                        EvidenceReference(
+                            evidence_type="code_relevance",
+                            identifier=relevance.path,
+                            description=(
+                                f"Source file '{relevance.path}' "
+                                f"has code relevance score "
+                                f"{relevance.score:.2f} to the "
+                                "observed failure."
+                            ),
+                            strength="supporting",
+                        )
+                    )
+
+                    for reason in relevance.reasons:
+                        references.append(
+                            EvidenceReference(
+                                evidence_type="code_relevance",
+                                identifier=relevance.path,
+                                description=reason,
+                                strength="supporting",
+                            )
+                        )
+        
         return references
 
     def _collect_contradicting_evidence(

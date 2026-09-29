@@ -12,7 +12,7 @@ from hypothesis.engine import HypothesisEngine
 from agent.strategies import InvestigationPlanningEngine
 from agent.uncertainty import UncertaintyAnalyzer
 from agent.llm.context import build_llm_context
-
+from agent.decision import InvestigationDecisionEngine
 
 Tool = Callable[..., dict[str, Any]]
 
@@ -61,11 +61,11 @@ class InvestigationAgent:
 
         self.planning_engine = InvestigationPlanningEngine()
         self.uncertainty_analyzer = UncertaintyAnalyzer()
+        self.decision_engine = InvestigationDecisionEngine()
         self.llm_reasoner = llm_reasoner
         self.hypothesis_planner = (
             self.planning_engine.hypothesis.planner
         )
-    
     def _assess_uncertainty(self, state):
         return self.uncertainty_analyzer.assess(state)
     # =====================================================
@@ -167,6 +167,19 @@ class InvestigationAgent:
 
             state.record_hypotheses()
 
+            decision = self.decision_engine.decide(
+                state
+            )
+
+            state.decision = decision.to_dict()
+
+            # state.add_note(
+            #     (
+            #         f"Decision: {decision.decision}. "
+            #         f"{decision.reason}"
+            #     )
+            # )
+
             uncertainty = (
                 self.uncertainty_analyzer.assess(state)
             )
@@ -178,7 +191,10 @@ class InvestigationAgent:
                     llm_result
                 )
 
-            if not uncertainty.should_continue:
+            if decision.decision in {
+                InvestigationDecisionEngine.CONCLUDE,
+                InvestigationDecisionEngine.INSUFFICIENT_EVIDENCE,
+            }:
                 state.completed = True
                 break
 
@@ -195,11 +211,99 @@ class InvestigationAgent:
         state: InvestigationState,
     ) -> InvestigationAction | None:
 
+        # -------------------------------------------------
+        # Decision-driven continuation
+        # -------------------------------------------------
+
+        if state.decision:
+
+            decision_type = state.decision.get(
+                "decision"
+            )
+
+            next_action = state.decision.get(
+                "next_action"
+            )
+
+            if (
+                decision_type == "INVESTIGATE"
+                and next_action
+                and next_action in self.tools
+                and next_action not in state.tool_history
+            ):
+
+                return self._build_decision_action(
+                    state,
+                    next_action,
+                )
+
         return self.planning_engine.plan(
             state=state,
             available_tools=set(self.tools.keys()),
         )
 
+    def _build_decision_action(
+        self,
+        state: InvestigationState,
+        tool: str,
+    ) -> InvestigationAction:
+
+        hypothesis = (
+            state.selected_hypothesis
+        )
+
+        hypothesis_name = (
+            hypothesis.name
+            if hypothesis
+            else "current investigation"
+        )
+
+        if tool == "search_code":
+
+            query = (
+                self.hypothesis_planner
+                ._build_code_search_query(
+                    hypothesis=hypothesis,
+                    state=state,
+                )
+            )
+
+            return InvestigationAction(
+                tool="search_code",
+                arguments={
+                    "query": query,
+                },
+                reason=(
+                    "Investigate source code relevant "
+                    f"to hypothesis '{hypothesis_name}'."
+                ),
+            )
+
+        if tool == "investigate_database":
+            return InvestigationAction(
+                tool="investigate_database",
+                arguments={
+                    "service": state.service,
+                },
+                reason=(
+                    "Investigate the database dependency failure "
+                    "because database health evidence is needed "
+                    "to determine whether the database is the "
+                    "underlying cause of the service failure."
+                ),
+            )
+            
+
+        return InvestigationAction(
+            tool=tool,
+            arguments={
+                "service": state.service,
+            },
+            reason=(
+                "Investigate the evidence gap associated "
+                f"with hypothesis '{hypothesis_name}'."
+            ),
+        )
     def _run_llm_reasoning(
         self,
         state: InvestigationState,
@@ -344,6 +448,30 @@ class InvestigationAgent:
         elif tool == "find_traces":
 
             state.trace_result = result
+
+        elif tool in {
+            "get_file",
+            "search_code",
+        }:
+
+            state.code_results.append(
+                result
+            )
+
+        elif tool in {
+            "list_commits",
+            "get_commit",
+        }:
+
+            state.commit_results.append(
+                result
+            )
+
+        elif tool == "get_diff":
+
+            state.diff_results.append(
+                result
+            )
     # =====================================================
     # EVIDENCE
     # =====================================================
@@ -359,6 +487,9 @@ class InvestigationAgent:
                 log_result=state.log_result,
                 metric_results=state.metric_results,
                 trace_result=state.trace_result,
+                code_results=state.code_results,
+                commit_results=state.commit_results,
+                diff_results=state.diff_results,
             )
         )
 
@@ -797,6 +928,7 @@ class InvestigationAgent:
                 state.action_outcomes
             ),
             uncertainty=uncertainty,
+            decision=state.decision,
             llm_reasoning=(
                 state.llm_reasoning_history[-1]["reasoning"]
                 if state.llm_reasoning_history

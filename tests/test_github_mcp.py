@@ -2,6 +2,7 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -9,7 +10,7 @@ from mcp.client.stdio import stdio_client
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-async def main():
+async def run_github_mcp_test():
     server = StdioServerParameters(
         command=sys.executable,
         args=["-m", "mcp_servers.github.server"],
@@ -20,14 +21,13 @@ async def main():
         async with ClientSession(read, write) as session:
 
             # ---------------------------------------------------------
-            # 1. MCP INITIALIZATION
+            # MCP INITIALIZATION
             # ---------------------------------------------------------
 
             await session.initialize()
-            print("MCP initialization: OK")
 
             # ---------------------------------------------------------
-            # 2. TOOLS/LIST
+            # TOOLS/LIST
             # ---------------------------------------------------------
 
             tools = await session.list_tools()
@@ -43,54 +43,49 @@ async def main():
                 "get_diff",
             }
 
-            print("\nRegistered tools:")
-
-            for name in sorted(tool_names):
-                print(f"  - {name}")
-
-            assert expected_tools.issubset(tool_names), (
-                f"Missing tools: {expected_tools - tool_names}"
-            )
-
-            print("tools/list: OK")
+            assert expected_tools.issubset(tool_names)
 
             # ---------------------------------------------------------
-            # 3. GET REPOSITORY
+            # GET REPOSITORY
             # ---------------------------------------------------------
 
-            result = await session.call_tool(
+            repository_result = await session.call_tool(
                 "get_repository",
                 arguments={},
             )
+            
+            assert not repository_result.isError
+            assert repository_result.structuredContent["status"] == "success"
 
-            print("\n[get_repository]")
-            print(result)
+            repository = repository_result.structuredContent["repository"]
 
-            assert not result.isError
-            print("get_repository: OK")
+            assert repository["full_name"] == "Suryaaaa27/devrescue"
+            assert repository["default_branch"] == "main"
 
             # ---------------------------------------------------------
-            # 4. GET FILE
+            # GET FILE
             # ---------------------------------------------------------
 
-            result = await session.call_tool(
+            file_result = await session.call_tool(
                 "get_file",
                 arguments={
                     "path": "README.md",
                 },
             )
 
-            print("\n[get_file]")
-            print(result)
+            assert not file_result.isError
+            assert file_result.structuredContent["status"] == "success"
 
-            assert not result.isError
-            print("get_file: OK")
+            file_data = file_result.structuredContent["file"]
+
+            assert file_data["path"] == "README.md"
+            assert "content" in file_data
 
             # ---------------------------------------------------------
-            # 5. SEARCH CODE
+            # SEARCH CODE
             # ---------------------------------------------------------
 
-            result = await session.call_tool(
+            search_result = await session.call_tool(
                 "search_code",
                 arguments={
                     "query": "FastAPI",
@@ -98,87 +93,89 @@ async def main():
                 },
             )
 
-            print("\n[search_code]")
-            print(result)
+            assert not search_result.isError
+            assert search_result.structuredContent["status"] == "success"
 
-            assert not result.isError
-            print("search_code: OK")
+            assert "results" in search_result.structuredContent
 
             # ---------------------------------------------------------
-            # 6. LIST COMMITS
+            # LIST COMMITS
             # ---------------------------------------------------------
 
-            result = await session.call_tool(
+            commits_result = await session.call_tool(
                 "list_commits",
                 arguments={
                     "limit": 5,
                 },
             )
 
-            print("\n[list_commits]")
-            print(result)
+            assert not commits_result.isError
+            assert commits_result.structuredContent["status"] == "success"
 
-            assert not result.isError
-            print("list_commits: OK")
+            commits = commits_result.structuredContent["results"]
 
-            # ---------------------------------------------------------
-            # 7. EXTRACT COMMIT SHA
-            # ---------------------------------------------------------
+            assert len(commits) > 0
 
-            commit_sha = None
+            commit_sha = commits[0]["sha"]
 
-            if result.structuredContent:
-                commits = result.structuredContent.get("commits", [])
-
-                if commits:
-                    commit_sha = commits[0].get("sha")
-
-            assert commit_sha, "No commit SHA returned by list_commits"
-
-            print(f"\nLatest commit SHA: {commit_sha}")
+            assert commit_sha
 
             # ---------------------------------------------------------
-            # 8. GET COMMIT
+            # GET COMMIT
             # ---------------------------------------------------------
 
-            result = await session.call_tool(
+            commit_result = await session.call_tool(
                 "get_commit",
                 arguments={
                     "sha": commit_sha,
                 },
             )
 
-            print("\n[get_commit]")
-            print(result)
+            assert not commit_result.isError
+            assert commit_result.structuredContent["status"] == "success"
 
-            assert not result.isError
-            print("get_commit: OK")
+            commit = commit_result.structuredContent["commit"]
+
+            assert commit["sha"] == commit_sha
 
             # ---------------------------------------------------------
-            # 9. GET DIFF
+            # GET DIFF
             # ---------------------------------------------------------
 
-            result = await session.call_tool(
+            diff_result = await session.call_tool(
                 "get_diff",
                 arguments={
                     "sha": commit_sha,
                 },
             )
 
-            print("\n[get_diff]")
-            print(result)
+            assert not diff_result.isError
+            assert diff_result.structuredContent["status"] == "success"
 
-            assert not result.isError
-            print("get_diff: OK")
+            print("\nActual get_diff structured content:")
+            print(diff_result.structuredContent)
+
+            assert diff_result.structuredContent["status"] == "success"
+            assert "files" in diff_result.structuredContent
 
             # ---------------------------------------------------------
-            # FINAL
+            # FINAL ASSERTION
             # ---------------------------------------------------------
 
-            print("\n========================================")
-            print("GitHub MCP integration test: ALL PASSED")
-            print("========================================")
+            return {
+                "repository": repository["full_name"],
+                "commit_sha": commit_sha,
+                "tools": sorted(tool_names),
+            }
+
+
+def test_github_mcp_integration():
+    result = asyncio.run(run_github_mcp_test())
+
+    assert result["repository"] == "Suryaaaa27/devrescue"
+    assert len(result["tools"]) == 6
+    assert result["commit_sha"]
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    pytest.main([__file__, "-v"])
