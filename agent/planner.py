@@ -24,9 +24,9 @@ class HypothesisPlanner:
     def __init__(self, max_actions: int = 3):
         self.max_actions = max_actions
         self.value_scorer = EvidenceValueScorer()
-    
-    
-    
+
+
+
     def identify_llm_guided_gaps(
         self,
         hypothesis: Hypothesis,
@@ -194,6 +194,7 @@ class HypothesisPlanner:
                     priority=110,
                     tool="search_logs",
                     arguments={
+                        "query": "500",
                         "service": state.service,
                     },
                 )
@@ -238,7 +239,7 @@ class HypothesisPlanner:
             )
 
         return gaps
-    
+
     def _build_code_search_query(
         self,
         hypothesis: Hypothesis,
@@ -341,7 +342,7 @@ class HypothesisPlanner:
         query = " ".join(cleaned[:3])
 
         return query or state.service
-    
+
     def identify_gaps(
         self,
         hypothesis: Hypothesis,
@@ -494,7 +495,7 @@ class HypothesisPlanner:
                         arguments={"service": state.service},
                     )
                 )
-        
+
         # ---------------------------------------------------------
         # GitHub / code investigation
         # ---------------------------------------------------------
@@ -603,7 +604,7 @@ class HypothesisPlanner:
                         arguments={},
                     )
                 )
-        
+
         # ---------------------------------------------------------
         # Generic fallback investigation
         # ---------------------------------------------------------
@@ -743,14 +744,14 @@ class HypothesisPlanner:
                 f"{gap.description}"
             ),
         )
-        
+
     def rank_actions(self, hypothesis, state):
         gaps = self.identify_gaps(
             hypothesis=hypothesis,
             state=state,
         )
-        
-        
+
+
         llm_gaps = self.identify_llm_guided_gaps(
             state=state,
             hypothesis=hypothesis,

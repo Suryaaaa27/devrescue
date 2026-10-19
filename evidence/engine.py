@@ -5,6 +5,7 @@ from evidence.models import (
     CodeEvidence,
     CommitEvidence,
     Correlation,
+    DatabaseEvidence,
     DiffEvidence,
     InvestigationEvidence,
     LogEvidence,
@@ -32,6 +33,7 @@ class EvidenceEngine:
         code_results: list[dict[str, Any]] | None = None,
         commit_results: list[dict[str, Any]] | None = None,
         diff_results: list[dict[str, Any]] | None = None,
+        domain_results: list[dict[str, Any]] | None = None,
     ) -> InvestigationEvidence:
 
         evidence = InvestigationEvidence(
@@ -52,7 +54,7 @@ class EvidenceEngine:
             evidence,
             trace_result or {},
         )
-        
+
         self._add_code(
             evidence,
             code_results or [],
@@ -67,7 +69,14 @@ class EvidenceEngine:
             evidence,
             diff_results or [],
         )
-        
+
+        evidence.database.extend(
+            self._build_database_evidence(
+                domain_results,
+                service,
+            )
+        )
+
         self._deduplicate(
             evidence
         )
@@ -79,11 +88,11 @@ class EvidenceEngine:
         self._classify_signals(
             evidence
         )
-        
+
         self._correlate_temporally(
             evidence
         )
-        
+
         self._build_code_relevance(
             evidence
         )
@@ -94,6 +103,57 @@ class EvidenceEngine:
         )
 
         return evidence
+
+    def _build_database_evidence(
+        self,
+        domain_results: list[dict[str, Any]] | None,
+        service: str,
+    ) -> list[DatabaseEvidence]:
+
+        database_evidence: list[DatabaseEvidence] = []
+
+        for result in domain_results or []:
+            if not isinstance(result, dict):
+                continue
+
+            tool = result.get("tool")
+
+            if tool not in {
+                "check_database_health",
+                "investigate_database",
+                "get_database_metadata",
+            }:
+                continue
+
+            database_evidence.append(
+                DatabaseEvidence(
+                    tool=str(tool),
+                    service=str(result.get("service", service)),
+                    database=(
+                        str(result["database"])
+                        if result.get("database") is not None
+                        else None
+                    ),
+                    status=str(result.get("status", "unknown")),
+                    error=(
+                        str(result["error"])
+                        if result.get("error") is not None
+                        else None
+                    ),
+                    user=(
+                        str(result["user"])
+                        if result.get("user") is not None
+                        else None
+                    ),
+                    server_version=(
+                        str(result["server_version"])
+                        if result.get("server_version") is not None
+                        else None
+                    ),
+                )
+            )
+
+        return database_evidence
 
     # ---------------------------------------------------------
     # Normalization
@@ -136,23 +196,37 @@ class EvidenceEngine:
 
         for result in metric_results:
 
-            metric = MetricEvidence(
-                metric=result.get(
-                    "metric",
-                    {}
-                ),
-                value=result.get(
-                    "value"
-                ),
-                query=result.get(
-                    "query",
-                    ""
-                ),
-            )
+            if isinstance(result, dict) and isinstance(
+                result.get("results"),
+                list,
+            ):
+                metric_items = result["results"]
+                default_query = result.get("query", "")
+            elif isinstance(result, list):
+                metric_items = result
+                default_query = ""
+            else:
+                metric_items = [result]
+                default_query = ""
 
-            evidence.metrics.append(
-                metric
-            )
+            for item in metric_items:
+                if not isinstance(item, dict):
+                    continue
+
+                metric = item.get("metric", {})
+                value = item.get("value")
+                query = item.get("query", default_query)
+
+                if not metric and value is None:
+                    continue
+
+                evidence.metrics.append(
+                    MetricEvidence(
+                        metric=metric,
+                        value=value,
+                        query=query,
+                    )
+                )
 
     def _add_traces(
         self,
@@ -283,7 +357,7 @@ class EvidenceEngine:
             )
 
             evidence.code.append(code)
-            
+
     def _add_commits(
         self,
         evidence: InvestigationEvidence,
@@ -353,7 +427,7 @@ class EvidenceEngine:
                 evidence.commits.append(
                     commit
                 )
-            
+
     def _add_diffs(
         self,
         evidence: InvestigationEvidence,
@@ -597,7 +671,7 @@ class EvidenceEngine:
         # GitHub correlations
         # ---------------------------------------------------------
 
-        # Code ↔ Diff
+        # Code â†” Diff
         #
         # A diff is directly relevant to a source file when
         # both belong to the same repository and path.
@@ -627,7 +701,7 @@ class EvidenceEngine:
                         )
                     )
 
-        # Commit ↔ Diff
+        # Commit â†” Diff
         #
         # A diff belongs to the commit identified by its SHA.
         for commit in evidence.commits:
@@ -653,7 +727,7 @@ class EvidenceEngine:
                         )
                     )
 
-        # Code ↔ Commit
+        # Code â†” Commit
         #
         # Connect source code directly to commits when one of the
         # commit's diffs modifies that exact source file.
@@ -829,6 +903,43 @@ class EvidenceEngine:
                             "invalid_input"
                         )
 
+        # --------------------------------------------------
+        # Database signals
+        # --------------------------------------------------
+
+        for database in evidence.database:
+
+            status = database.status.lower()
+
+            if status in {
+                "unavailable",
+                "error",
+                "failed",
+            }:
+                signals.append(
+                    "database_unavailable"
+                )
+
+            if database.error:
+                error_message = database.error.lower()
+
+                connection_failure_terms = (
+                    "connection refused",
+                    "connection failed",
+                    "could not connect",
+                    "connection timed out",
+                    "timeout expired",
+                    "connection error",
+                )
+
+                if any(
+                    term in error_message
+                    for term in connection_failure_terms
+                ):
+                    signals.append(
+                        "database_connection_failure"
+                    )
+
         evidence.signals = list(
             dict.fromkeys(signals)
         )
@@ -982,7 +1093,7 @@ class EvidenceEngine:
 
         except ValueError:
             return None
-    
+
     def _build_code_relevance(
         self,
         evidence: InvestigationEvidence,
@@ -1006,7 +1117,7 @@ class EvidenceEngine:
             traces=evidence.traces,
             logs=evidence.logs,
         )
-    
+
     # ---------------------------------------------------------
     # Summary
     # ---------------------------------------------------------
@@ -1062,6 +1173,21 @@ class EvidenceEngine:
             "trace_id_count": len(
                 evidence.trace_ids
             ),
+            "database_count": len(
+                evidence.database
+            ),
+            "database": [
+                {
+                    "tool": item.tool,
+                    "service": item.service,
+                    "database": item.database,
+                    "status": item.status,
+                    "error": item.error,
+                    "user": item.user,
+                    "server_version": item.server_version,
+                }
+                for item in evidence.database
+            ],
             "signal_count": len(
                 evidence.signals
             ),

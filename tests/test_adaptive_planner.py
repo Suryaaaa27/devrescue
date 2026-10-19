@@ -9,6 +9,7 @@ sys.path.insert(
 )
 
 from agent.investigator import InvestigationAgent
+from agent.state import InvestigationState
 
 
 def fake_search_logs(**kwargs):
@@ -110,3 +111,32 @@ def test_database_adaptive_planning():
         ]
         == 1
     )
+
+
+def test_database_tool_result_is_added_to_typed_evidence():
+    agent = InvestigationAgent(tools={})
+    state = InvestigationState(
+        incident="database metadata check",
+        service="payment-service",
+    )
+    state.record_tool_call(
+        "get_database_metadata",
+        {
+            "database": "payments",
+            "status": "available",
+            "user": "devrescue",
+            "server_version": "PostgreSQL 16",
+        },
+    )
+
+    agent._update_evidence(state)
+
+    assert state.evidence is not None
+    assert len(state.evidence.database) == 1
+    evidence = state.evidence.database[0]
+    assert evidence.tool == "get_database_metadata"
+    assert evidence.service == "payment-service"
+    assert evidence.database == "payments"
+    assert evidence.status == "available"
+    assert evidence.user == "devrescue"
+    assert evidence.server_version == "PostgreSQL 16"

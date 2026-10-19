@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from hypothesis.models import Hypothesis
+
 
 @dataclass(frozen=True)
 class InvestigationAction:
@@ -28,9 +30,9 @@ class InvestigationResult:
     explanation: str | None = None
 
     iterations: int = 0
-    
+
     decision: dict[str, Any] | None = None
-    
+
     tools_called: list[str] = field(
         default_factory=list
     )
@@ -39,7 +41,7 @@ class InvestigationResult:
         default_factory=dict
     )
 
-    hypotheses: list[dict[str, Any]] = field(
+    hypotheses: list[dict[str, Any] | Hypothesis] = field(
         default_factory=list
     )
 
@@ -62,14 +64,14 @@ class InvestigationResult:
     action_outcomes: list[dict[str, Any]] = field(
         default_factory=list
     )
-    
+
     uncertainty: dict[str, Any] = field(default_factory=dict)
     llm_reasoning: dict[str, Any] | None = None
 
     llm_reasoning_history: list[dict[str, Any]] = field(
         default_factory=list
     )
-    
+
     def to_dict(self):
 
         return {
@@ -82,7 +84,12 @@ class InvestigationResult:
             "iterations": self.iterations,
             "tools_called": self.tools_called,
             "evidence_summary": self.evidence_summary,
-            "hypotheses": self.hypotheses,
+            "hypotheses": [
+                hypothesis.to_dict()
+                if isinstance(hypothesis, Hypothesis)
+                else hypothesis
+                for hypothesis in self.hypotheses
+            ],
             "planning_history": self.planning_history,
             "investigation_notes": (
                 self.investigation_notes
@@ -91,6 +98,6 @@ class InvestigationResult:
             "evidence_gaps": self.evidence_gaps,
             "action_outcomes": self.action_outcomes,
             "uncertainty": self.uncertainty,
-            "llm_reasoning": self.llm_reasoning, 
+            "llm_reasoning": self.llm_reasoning,
             "llm_reasoning_history": self.llm_reasoning_history,
         }

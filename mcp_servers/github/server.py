@@ -38,6 +38,8 @@ def _headers() -> dict[str, str]:
 def _request(
     path: str,
     params: dict[str, Any] | None = None,
+    method: str = "GET",
+    body: dict[str, Any] | None = None,
 ) -> Any:
     url = f"{GITHUB_API}{path}"
 
@@ -49,27 +51,50 @@ def _request(
                 if value is not None
             }
         )
+
         if query:
             url = f"{url}?{query}"
 
+    request_data = None
+
+    if body is not None:
+        request_data = json.dumps(body).encode("utf-8")
+
     request = urllib.request.Request(
         url,
-        headers=_headers(),
-        method="GET",
+        data=request_data,
+        headers={
+            **_headers(),
+            "Content-Type": "application/json",
+        },
+        method=method,
     )
 
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            body = response.read().decode("utf-8")
-            return json.loads(body)
+            if response.status == 204:
+                return {
+                    "status": "success",
+                    "status_code": 204,
+                }
+
+            response_body = response.read().decode("utf-8")
+
+            if not response_body:
+                return {}
+
+            return json.loads(response_body)
 
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        response_body = exc.read().decode(
+            "utf-8",
+            errors="replace",
+        )
 
         try:
-            details = json.loads(body)
+            details = json.loads(response_body)
         except json.JSONDecodeError:
-            details = body
+            details = response_body
 
         return {
             "status": "error",
@@ -435,7 +460,260 @@ def get_diff(
         },
         "files": files,
     }
+@mcp.tool()
+def create_branch(
+    branch: str,
+    from_branch: str | None = None,
+    owner: str | None = None,
+    repository: str | None = None,
+) -> dict[str, Any]:
+    """
+    Create a new Git branch from an existing branch.
+    """
 
+    owner, repository = _repository(
+        owner,
+        repository,
+    )
 
+    branch = branch.strip()
+
+    if not branch:
+        return {
+            "status": "error",
+            "error": "Branch name cannot be empty.",
+        }
+
+    if branch in {"main", "master"}:
+        return {
+            "status": "error",
+            "error": "Creating or modifying protected default branches is not allowed.",
+        }
+
+    source_branch = from_branch or "main"
+
+    reference = _request(
+        f"/repos/{owner}/{repository}/git/ref/heads/{source_branch}"
+    )
+
+    if isinstance(reference, dict) and reference.get("status") == "error":
+        return reference
+
+    sha = reference.get("object", {}).get("sha")
+
+    if not sha:
+        return {
+            "status": "error",
+            "error": "Unable to resolve source branch commit.",
+        }
+
+    result = _request(
+        f"/repos/{owner}/{repository}/git/refs",
+        method="POST",
+        body={
+            "ref": f"refs/heads/{branch}",
+            "sha": sha,
+        },
+    )
+
+    if isinstance(result, dict) and result.get("status") == "error":
+        return result
+
+    return {
+        "status": "success",
+        "repository": f"{owner}/{repository}",
+        "branch": branch,
+        "from_branch": source_branch,
+        "sha": sha,
+    }
+
+@mcp.tool()
+def create_or_update_file(
+    path: str,
+    content: str,
+    branch: str,
+    message: str,
+    sha: str | None = None,
+    owner: str | None = None,
+    repository: str | None = None,
+) -> dict[str, Any]:
+    """
+    Create or update a file on a non-default branch.
+    """
+
+    owner, repository = _repository(
+        owner,
+        repository,
+    )
+
+    path = path.strip()
+    branch = branch.strip()
+    message = message.strip()
+
+    if not path:
+        return {
+            "status": "error",
+            "error": "File path cannot be empty.",
+        }
+
+    if not branch:
+        return {
+            "status": "error",
+            "error": "Branch cannot be empty.",
+        }
+
+    if branch in {"main", "master"}:
+        return {
+            "status": "error",
+            "error": "Direct writes to the default branch are forbidden.",
+        }
+
+    if not message:
+        return {
+            "status": "error",
+            "error": "Commit message cannot be empty.",
+        }
+
+    encoded_content = base64.b64encode(
+        content.encode("utf-8")
+    ).decode("ascii")
+
+    body: dict[str, Any] = {
+        "message": message,
+        "content": encoded_content,
+        "branch": branch,
+    }
+
+    if sha:
+        body["sha"] = sha
+
+    result = _request(
+        f"/repos/{owner}/{repository}/contents/{path}",
+        method="PUT",
+        body=body,
+    )
+
+    if isinstance(result, dict) and result.get("status") == "error":
+        return result
+
+    commit = result.get("commit", {})
+
+    return {
+        "status": "success",
+        "repository": f"{owner}/{repository}",
+        "branch": branch,
+        "path": path,
+        "commit": {
+            "sha": commit.get("sha"),
+            "message": commit.get("message"),
+            "html_url": commit.get("html_url"),
+        },
+    }
+
+@mcp.tool()
+def create_pull_request(
+    title: str,
+    body: str,
+    head: str,
+    base: str | None = None,
+    owner: str | None = None,
+    repository: str | None = None,
+) -> dict[str, Any]:
+    """
+    Create a pull request from a remediation branch.
+    """
+
+    owner, repository = _repository(
+        owner,
+        repository,
+    )
+
+    title = title.strip()
+    head = head.strip()
+    base = (base or "main").strip()
+
+    if not title:
+        return {
+            "status": "error",
+            "error": "Pull request title cannot be empty.",
+        }
+
+    if not head:
+        return {
+            "status": "error",
+            "error": "Pull request head branch cannot be empty.",
+        }
+
+    if head in {"main", "master"}:
+        return {
+            "status": "error",
+            "error": "Pull request head must be a remediation branch.",
+        }
+
+    result = _request(
+        f"/repos/{owner}/{repository}/pulls",
+        method="POST",
+        body={
+            "title": title,
+            "body": body,
+            "head": head,
+            "base": base,
+        },
+    )
+
+    if isinstance(result, dict) and result.get("status") == "error":
+        return result
+
+    return {
+        "status": "success",
+        "repository": f"{owner}/{repository}",
+        "pull_request": {
+            "number": result.get("number"),
+            "title": result.get("title"),
+            "state": result.get("state"),
+            "html_url": result.get("html_url"),
+            "head": result.get("head", {}).get("ref"),
+            "base": result.get("base", {}).get("ref"),
+        },
+    }
+@mcp.tool()
+def close_pull_request(
+    pull_number: int,
+    owner: str | None = None,
+    repository: str | None = None,
+) -> dict:
+    """Close an existing pull request without merging it."""
+    if pull_number <= 0:
+        raise ValueError("pull_number must be positive")
+
+    owner, repository = _repository(owner, repository)
+
+    return _request(
+        f"/repos/{owner}/{repository}/pulls/{pull_number}",
+        method="PATCH",
+        body={"state": "closed"},
+    )
+
+@mcp.tool()
+def delete_branch(
+    branch: str,
+    owner: str | None = None,
+    repository: str | None = None,
+) -> dict:
+    """Delete a non-protected Git branch."""
+    if not branch.strip():
+        raise ValueError("branch must not be empty")
+
+    normalized = branch.strip().lower()
+
+    if normalized in {"main", "master"}:
+        raise ValueError("Refusing to delete protected branch")
+
+    owner, repository = _repository(owner, repository)
+
+    return _request(
+        f"/repos/{owner}/{repository}/git/refs/heads/{branch}",
+        method="DELETE",
+    )
 if __name__ == "__main__":
     mcp.run()

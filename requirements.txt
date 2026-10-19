@@ -3,6 +3,7 @@ opentelemetry-api
 opentelemetry-sdk
 opentelemetry-exporter-prometheus
 prometheus-client
-mcp>=1.28,<2
 openai>=1.0
 python-dotenv
+mcp>=1.30.0,<2.0.0
+psycopg[binary]

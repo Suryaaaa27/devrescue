@@ -46,6 +46,7 @@ class BootstrapPlanningStrategy:
             return InvestigationAction(
                 tool="search_logs",
                 arguments={
+                    "query": "500",
                     "service": state.service,
                 },
                 reason=(

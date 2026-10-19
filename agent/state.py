@@ -17,7 +17,7 @@ class InvestigationState:
     max_iterations: int = 8
 
     completed: bool = False
-    
+
     decision: dict[str, Any] | None = None
 
     available_tools: set[str] = field(
@@ -30,6 +30,10 @@ class InvestigationState:
 
     tool_results: dict[str, list[dict[str, Any]]] = field(
         default_factory=dict
+    )
+
+    domain_results: list[dict[str, Any]] = field(
+        default_factory=list
     )
 
     log_result: dict[str, Any] = field(
@@ -78,7 +82,7 @@ class InvestigationState:
     llm_reasoning_history: list[dict[str, Any]] = field(
         default_factory=list
     )
-    
+
     def record_tool_call(
         self,
         tool: str,
@@ -91,6 +95,18 @@ class InvestigationState:
             tool,
             [],
         ).append(result)
+
+        if tool in {
+            "check_database_health",
+            "investigate_database",
+            "get_database_metadata",
+        }:
+            self.domain_results.append(
+                {
+                    "tool": tool,
+                    **result,
+                }
+            )
 
     def add_note(
         self,
@@ -163,7 +179,7 @@ class InvestigationState:
                 "priority": priority,
             }
         )
-    
+
     def record_hypotheses(self):
         """
         Preserve the hypothesis ranking at the current iteration.

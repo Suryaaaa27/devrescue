@@ -1,0 +1,25 @@
+services:
+  devrescue-postgres:
+    image: postgres:16
+    container_name: devrescue-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: payments
+      POSTGRES_USER: devrescue
+      POSTGRES_PASSWORD: devrescue_dev_password
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - devrescue_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devrescue -d payments"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  devrescue_postgres_data:

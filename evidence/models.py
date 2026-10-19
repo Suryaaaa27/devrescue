@@ -98,7 +98,15 @@ class CodeRelevance:
     score: float
     matched_terms: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
-
+@dataclass(frozen=True)
+class DatabaseEvidence:
+    tool: str
+    service: str
+    database: str | None
+    status: str
+    error: str | None = None
+    user: str | None = None
+    server_version: str | None = None
 @dataclass
 class InvestigationEvidence:
     service: str
@@ -108,6 +116,7 @@ class InvestigationEvidence:
     code: list[CodeEvidence] = field(default_factory=list)
     commits: list[CommitEvidence] = field(default_factory=list)
     diffs: list[DiffEvidence] = field(default_factory=list)
+    database: list[DatabaseEvidence] = field(default_factory=list)
     correlations: list[Correlation] = field(default_factory=list)
     temporal_correlations: list[TemporalCorrelation] = field(default_factory=list)
 

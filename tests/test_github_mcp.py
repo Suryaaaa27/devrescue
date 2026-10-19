@@ -53,7 +53,7 @@ async def run_github_mcp_test():
                 "get_repository",
                 arguments={},
             )
-            
+
             assert not repository_result.isError
             assert repository_result.structuredContent["status"] == "success"
 
@@ -173,7 +173,7 @@ def test_github_mcp_integration():
     result = asyncio.run(run_github_mcp_test())
 
     assert result["repository"] == "Suryaaaa27/devrescue"
-    assert len(result["tools"]) == 6
+    assert len(result["tools"]) == 11
     assert result["commit_sha"]
 
 

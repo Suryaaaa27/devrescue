@@ -101,7 +101,7 @@ class InvestigationAgent:
 
             action = self._plan_next_action(state)
 
-            
+
 
             if action is None:
                 state.completed = True
@@ -292,7 +292,7 @@ class InvestigationAgent:
                     "underlying cause of the service failure."
                 ),
             )
-            
+
 
         return InvestigationAction(
             tool=tool,
@@ -490,6 +490,7 @@ class InvestigationAgent:
                 code_results=state.code_results,
                 commit_results=state.commit_results,
                 diff_results=state.diff_results,
+                domain_results=state.domain_results,
             )
         )
 
